@@ -1,0 +1,133 @@
+# inputs:
+#    * a set of desired Logical Keys LK
+#        * each is a collection of key_fields
+#    * assign a number to each bit of each field bits
+#        * Logical Key = {  fields = { fieldd0, field1, field 2 … } , direct_addr = {field2}, search_key = {field3, field 6, field 7 }, overflow = {} }
+#    * list of intrinsic fields and their phv location
+# parameters:
+#    * km_hw width     = 256
+#    * km_hw num       = 4
+#    * km_bitsel_width = 8
+#    * km_bitsel_num   = 4
+# decision variables
+#  option 1:
+#    exact location of each field in key and phv (tons of symmetry)
+#    field_loc[0][phv] = X
+#    field_loc[0][key_number] = X
+#  option 2:
+#    for each field bits
+#       1. byte location
+#       2. bit alignment
+#
+#
+#TE logic 
+#
+#* Given
+#    * position of fields in PHV
+#* Variables definitions
+#    * Let’s assign an id of each logical key field bit f
+#    * Let K(f) = positions of x in Physical Key
+#    * Let P(f) = positions of x in PHV
+#    * Let KM_NUM(K) = number of physical key maker LK needs
+#    * Let TKM be a temporary key maker
+#    * 
+#* Constraints
+#    * Lookup Capacity
+#        * K(f) < 512
+#    * Key Maker Capacity
+#        * KM_NUM(K) = max(K(f))/256
+#    * Address alignment
+#        * direct_addr LSB should be 16 bit aligned
+#    * Search key 
+#        * for all f in search_key
+#            * min(f) <= f <= max(f)
+#    * Byte Select Alignment
+#        * KMByte(f) = set of f which use key maker byte select
+#        * for all f using byte select
+#            * K(f) % 8 = P(f) % 8
+#    * Bit Select Grouping 
+#        * KMBitSelect0(f) = set of f which use key maker bit select
+#        * for all f in KMBitSelect0(f)
+#            * min(f) % 8 = 0
+#            * f < min(f) + 8
+#    * Should we just treat each key maker as 30 byte select + 2 x 8 bit select?
+#* 
+#* Break down the problem into steps
+#        * Logical Key to Virtual Key Maker
+#        * Virtual Key Maker Scheduling
+#        * 
+#* PHV->Profile
+#    * 
+#* Profile to Key Maker
+#    * 
+#* Key Maker to Key
+#    * 
+#==================================================
+#  set membership allocation first
+#    group fields into key makers 
+#    group fields into phv flits
+#    exact field constraints later
+#==================================================
+#    * un-roll flits to get 12 x 4 x 256 bit key makers
+#        * flits 0 key maker can have phv bits less than 512
+#        * flits 1 key maker can have member from key maker flit0 or phv bits 512  to 1024
+#        * flits 2 key maker can have member from key maker flit1 or phv bits 1024 to 1536
+#    * need to have lookup key ready in one of these 16 cycles
+#    * use matrix for membership
+#        *key field usage
+#             key_field_mbr[key][field] = [0,1] (Input)
+#        *key field size check
+#             sum(key_field_mbr[key][field] * field_size[field] for all field) < 512 (input check)
+#        *key maker hardware unit field membership
+#             km_hw[flit][unit][field] = [0,1]  (V)
+#        *key maker hardware unit capacity
+#             sum(km_hw[flit][unit][field] * field_size[field]) < 256  (C)
+#        *key maker update
+#             phv[flit][field] = [0,1] (V)
+#             km_hw[flit][unit][field] <= km_hw[flit-1][unit][field]) + phv[flit][field] (C)
+#        *key maker hw unit selection
+#             km_hw_sel[key][flit][unit] = [0,1] (V)
+#             sum(km_hw_sel[key][flit][unit] for all unit) <= 2 for all key (C)
+#        *key profile usage (assume single byte mode for now)
+#             km_hw_prof[flit][unit] = [0,1] (V)
+#             sum(km_hw_prof[flit][unit] for all flit/unit) <= 8 (C)
+#        *key maker can only select hw unit that has a profile
+#             km_hw_sel[key][flit][unit] <= km_hw_prof[flit][unit] for all key,flit,unit (C)
+#        *key maker has the fields required
+#             km_hw[flit][unit][field] >= km_hw_sel[key][flit][unit] for all key, flit, unit, key_field_mbr[key][field]
+#        *key field assignment
+#             km_field_byte_loc[key][field] = [0,31]  (V)
+#             km_field_bit_loc[key][field]  = [0,7]  (V)
+#             (km_field_byte_loc[key][field] * 8 + km_field_bit_loc[key][field]) + field_size[field] < 511  (C) for all key,field
+#        *key address field needs to be 16 bit aligned
+#             km_field_addr_sel[key][field] = [0,31]  (V)
+#             km_field_start[key][field] + field_size[field] = key_field_addr_sel[key_field] * 16 (C)
+#        *key search field needs to be grouped together
+#             search_size = sum(km_field_search[key][field])
+#             abs(km_field_search[key][field_x],km_field_search[key][field_y]) < search_size for all fields)
+#                         or
+#             km_field_search[key][field_x] - km_field_search[key][field_y]) < search_size (C)
+#             km_field_search[key][field_y] - km_field_search[key][field_x]) < search_size (C)
+#        *key maker bit select usage
+#             km_field_bitsel0[key][field][bit] = [0,1] (V)
+#             km_field_bitsel1[key][field][bit] = [0,1] (V)
+#             sum(km_field_bitsel0[key][field][bit]) < 8 (C)
+#             sum(km_field_bitsel1[key][field][bit]) < 8 (C)
+#        *key field bits alignments (keep them consecutve for now)
+#             km_field_align[key][field][bit] = [0,7] (V)
+#             km_field_byte_wrap[key][field][bit] = [0,field_size/8] (V) (for modolo operation)
+#             for (i=1; i < field_size[field]; i++)
+#                km_field_align[key][field][i] = (km_field_bit_loc[key][field][bit] + i) - (8 * km_field_byte_wrap[key][field][bit]) 
+#        *key maker byte align with phv
+#             phv_field_align[field][bit]     = [0,7] (V)
+#             km_field_align[key][field][bit] == phv_field_align[field][bit] if km_field_bitsel0[key][field][bit] == 0 &&  km_field_bitsel1[key][field][bit] == 0
+#                        or
+#             km_field_align[key][field][bit] - phv_field_align[field][bit]      <= km_field_bitsel0[key][field][bit] * X + km_field_bitsel1[key][field][bit] * X (C)
+#             phv_field_align[field][bit]     - km_field_align[key][field][bit]  <= km_field_bitsel0[key][field][bit] * X + km_field_bitsel1[key][field][bit] * X (C)
+#                  note: * X is an arbitrary big number (e.g. 8)
+#                        * if any bit select is used, want this equation to always be true (i.e. constraint not applied) 
+#        
+#
+#   
+#  
+#  
